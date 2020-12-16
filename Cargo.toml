@@ -19,7 +19,7 @@ pkg-config = "0.3.16"
 
 
 [dev-dependencies]
-rips = "0.2"
+image = "0.23"
 stopwatch = "0.0.7"
 env_logger = "0.7.0"
 

@@ -5,21 +5,31 @@ fn main() {
     let stream = jp2k::Stream::from_bytes(bytes).unwrap();
     // let stream = jp2k::Stream::from_file("/mnt/c/projects/iiif-server/cache/remote/322930.jp2").unwrap();
 
-    let jp2k::ImageBuffer { buffer, width, height, num_bands } = jp2k::ImageBuffer::build(
+    let jp2k::ImageBuffer {
+        buffer,
+        width,
+        height,
+        num_bands,
+    } = jp2k::ImageBuffer::build(
         codec,
         stream,
         jp2k::DecodeParams::default().with_reduce_factor(1),
     )
     .unwrap();
 
-    let img = rips::Image::from_memory(
-        buffer,
-        width as i32,
-        height as i32,
-        num_bands as i32,
-        rips::VipsBandFormat::VIPS_FORMAT_UCHAR,
+    let color_type = match num_bands {
+        1 => image::ColorType::L8,
+        2 => image::ColorType::La8,
+        3 => image::ColorType::Rgb8,
+        4 => image::ColorType::Rgba8,
+        _ => panic!(format!("unsupported num_bands found : {}", num_bands)),
+    };
+    image::save_buffer(
+        "examples/output/image.png",
+        &buffer,
+        width,
+        height,
+        color_type,
     )
     .unwrap();
-
-    img.write_to_file("examples/output/test.png").unwrap();
 }
