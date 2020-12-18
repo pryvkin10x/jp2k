@@ -18,17 +18,39 @@ This library brings its own libopenjpeg, which is statically linked. If you just
 ## Usage
 
 ```rust,no_run
-let bytes = include_bytes!("./rust-logo-512x512-blk.jp2");
+let bytes = include_bytes!("rust-logo-512x512-blk.jp2");
 
-let jp2k::Image(img) = jp2k::Image::from_bytes(
-    bytes,
-    jp2k::Codec::JP2,
-    Some(jp2k::DecodeParams::default().with_decoding_area(0, 0, 256, 256))
+let codec = jp2k::Codec::jp2();
+let stream = jp2k::Stream::from_bytes(bytes).unwrap();
+// let stream = jp2k::Stream::from_file("rust-logo-512x512-blk.jp2").unwrap();
+
+let jp2k::ImageBuffer {
+    buffer,
+    width,
+    height,
+    num_bands,
+} = jp2k::ImageBuffer::build(
+    codec,
+    stream,
+    jp2k::DecodeParams::default().with_reduce_factor(1),
 )
 .unwrap();
 
-let mut output = std::path::Path::new("examples/output/result.png");
-let _ = img.save(&mut output);
+let color_type = match num_bands {
+    1 => image::ColorType::L8,
+    2 => image::ColorType::La8,
+    3 => image::ColorType::Rgb8,
+    4 => image::ColorType::Rgba8,
+    _ => panic!(format!("unsupported num_bands found : {}", num_bands)),
+};
+image::save_buffer(
+    "examples/output/image.png",
+    &buffer,
+    width,
+    height,
+    color_type,
+)
+.unwrap();
 ```
 
 ## Original warnings and license statement
