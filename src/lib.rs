@@ -18,19 +18,39 @@ This library brings its own libopenjpeg, which is statically linked. If you just
 ## Usage
 
 ```rust,no_run
-fn main() {
-    let bytes = include_bytes!("./rust-logo-512x512-blk.jp2");
+let bytes = include_bytes!("rust-logo-512x512-blk.jp2");
 
-    let jp2k::Image(img) = jp2k::Image::from_bytes(
-        bytes,
-        jp2k::Codec::JP2,
-        Some(jp2k::DecodeParams::default().with_decoding_area(0, 0, 256, 256))
-    )
-    .unwrap();
+let codec = jp2k::Codec::jp2();
+let stream = jp2k::Stream::from_bytes(bytes).unwrap();
+// let stream = jp2k::Stream::from_file("rust-logo-512x512-blk.jp2").unwrap();
 
-    let mut output = std::path::Path::new("examples/output/result.png");
-    let _ = img.save(&mut output);
-}
+let jp2k::ImageBuffer {
+    buffer,
+    width,
+    height,
+    num_bands,
+} = jp2k::ImageBuffer::build(
+    codec,
+    stream,
+    jp2k::DecodeParams::default().with_reduce_factor(1),
+)
+.unwrap();
+
+let color_type = match num_bands {
+    1 => image::ColorType::L8,
+    2 => image::ColorType::La8,
+    3 => image::ColorType::Rgb8,
+    4 => image::ColorType::Rgba8,
+    _ => panic!(format!("unsupported num_bands found : {}", num_bands)),
+};
+image::save_buffer(
+    "examples/output/image.png",
+    &buffer,
+    width,
+    height,
+    color_type,
+)
+.unwrap();
 ```
 
 ## Original warnings and license statement
@@ -88,26 +108,19 @@ pub mod err {
     pub type Result<T> = std::result::Result<T, Error>;
 }
 
-#[cfg(feature = "docs-rs")]
-#[path = "ffi.ref.rs"]
-mod ffi;
-
-#[cfg(not(feature = "docs-rs"))]
-mod ffi;
-
 use std::ffi::CString;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 
-pub use ffi::{CODEC_FORMAT, COLOR_SPACE};
+pub use openjpeg_sys::{CODEC_FORMAT, COLOR_SPACE};
 
-struct InnerDecodeParams(ffi::opj_dparameters);
+struct InnerDecodeParams(openjpeg_sys::opj_dparameters);
 
 impl Default for InnerDecodeParams {
     fn default() -> Self {
-        let mut new = unsafe { std::mem::zeroed::<ffi::opj_dparameters>() };
+        let mut new = unsafe { std::mem::zeroed::<openjpeg_sys::opj_dparameters>() };
         unsafe {
-            ffi::opj_set_default_decoder_parameters(&mut new as *mut _);
+            openjpeg_sys::opj_set_default_decoder_parameters(&mut new as *mut _);
         }
         InnerDecodeParams(new)
     }
@@ -173,12 +186,12 @@ impl DecodeParams {
     }
 }
 
-pub struct Stream(*mut ffi::opj_stream_t);
+pub struct Stream(*mut openjpeg_sys::opj_stream_t);
 
 impl Drop for Stream {
     fn drop(&mut self) {
         unsafe {
-            ffi::opj_stream_destroy(self.0);
+            openjpeg_sys::opj_stream_destroy(self.0);
         }
     }
 }
@@ -186,7 +199,8 @@ impl Drop for Stream {
 impl Stream {
     pub fn from_file<T: Into<Vec<u8>>>(file_name: T) -> err::Result<Self> {
         let file_name = CString::new(file_name)?;
-        let ptr = unsafe { ffi::opj_stream_create_default_file_stream(file_name.as_ptr(), 1) };
+        let ptr =
+            unsafe { openjpeg_sys::opj_stream_create_default_file_stream(file_name.as_ptr(), 1) };
         Ok(Stream(ptr))
     }
 
@@ -203,40 +217,40 @@ impl Stream {
 
         unsafe extern "C" fn opj_stream_read_fn(
             p_buffer: *mut c_void,
-            p_nb_bytes: usize,
+            p_nb_bytes: u64,
             p_user_data: *mut c_void,
-        ) -> usize {
+        ) -> u64 {
             if p_buffer.is_null() {
                 return 0;
             }
 
             let user_data = p_user_data as *mut SliceWithOffset;
 
-            let len = (&*user_data).buf.len();
+            let len = (*user_data).buf.len();
 
-            let offset = (&*user_data).offset;
+            let offset = (*user_data).offset;
 
             let bytes_left = len - offset;
 
-            let bytes_read = std::cmp::min(bytes_left, p_nb_bytes);
+            let bytes_read = std::cmp::min(bytes_left, p_nb_bytes as usize);
 
-            let slice = &(&*user_data).buf[offset..offset + bytes_read];
+            let slice = &(*user_data).buf[offset..offset + bytes_read];
 
             std::ptr::copy_nonoverlapping(slice.as_ptr(), p_buffer as *mut u8, bytes_read);
 
             (*user_data).offset += bytes_read;
 
-            bytes_read
+            bytes_read as u64
         }
 
         let buf_len = buf.len();
         let user_data = Box::new(SliceWithOffset { buf, offset: 0 });
 
         let ptr = unsafe {
-            let jp2_stream = ffi::opj_stream_default_create(1);
-            ffi::opj_stream_set_read_function(jp2_stream, Some(opj_stream_read_fn));
-            ffi::opj_stream_set_user_data_length(jp2_stream, buf_len as u64);
-            ffi::opj_stream_set_user_data(
+            let jp2_stream = openjpeg_sys::opj_stream_default_create(1);
+            openjpeg_sys::opj_stream_set_read_function(jp2_stream, Some(opj_stream_read_fn));
+            openjpeg_sys::opj_stream_set_user_data_length(jp2_stream, buf_len as u64);
+            openjpeg_sys::opj_stream_set_user_data(
                 jp2_stream,
                 Box::into_raw(user_data) as *mut c_void,
                 Some(opj_stream_free_user_data_fn),
@@ -248,12 +262,12 @@ impl Stream {
     }
 }
 
-pub struct Codec(NonNull<ffi::opj_codec_t>);
+pub struct Codec(NonNull<openjpeg_sys::opj_codec_t>);
 
 impl Drop for Codec {
     fn drop(&mut self) {
         unsafe {
-            ffi::opj_destroy_codec(self.0.as_ptr());
+            openjpeg_sys::opj_destroy_codec(self.0.as_ptr());
         }
     }
 }
@@ -264,7 +278,7 @@ impl Codec {
     }
 
     pub fn create(format: CODEC_FORMAT) -> err::Result<Self> {
-        match NonNull::new(unsafe { ffi::opj_create_decompress(format) }) {
+        match NonNull::new(unsafe { openjpeg_sys::opj_create_decompress(format) }) {
             Some(ptr) => Ok(Codec(ptr)),
             None => Err(err::Error::boxed("Setting up the decoder failed.")),
         }
@@ -281,29 +295,32 @@ impl Info {
     pub fn build(codec: Codec, stream: Stream) -> err::Result<Self> {
         let mut params = InnerDecodeParams::default();
 
-        params.0.flags |= ffi::OPJ_DPARAMETERS_DUMP_FLAG;
+        params.0.flags |= openjpeg_sys::OPJ_DPARAMETERS_DUMP_FLAG;
 
-        if unsafe { ffi::opj_setup_decoder(codec.0.as_ptr(), &mut params.0) } != 1 {
+        if unsafe { openjpeg_sys::opj_setup_decoder(codec.0.as_ptr(), &mut params.0) } != 1 {
             return Err(err::Error::boxed("Setting up the decoder failed."));
         }
 
         let mut img = Image::new();
 
-        if unsafe { ffi::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
+        if unsafe { openjpeg_sys::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read header."));
         }
 
-        Ok(Info { width: img.width(), height: img.height() })
+        Ok(Info {
+            width: img.width(),
+            height: img.height(),
+        })
     }
 }
 
 #[derive(Debug)]
-pub struct Image(pub *mut ffi::opj_image_t);
+pub struct Image(pub *mut openjpeg_sys::opj_image_t);
 
 impl Drop for Image {
     fn drop(&mut self) {
         unsafe {
-            ffi::opj_image_destroy(self.0);
+            openjpeg_sys::opj_image_destroy(self.0);
         }
     }
 }
@@ -314,18 +331,18 @@ impl Image {
     }
 
     pub fn width(&self) -> u32 {
-        unsafe { (&*self.0).x1 - (&*self.0).x0 }
+        unsafe { (*self.0).x1 - (*self.0).x0 }
     }
 
     pub fn height(&self) -> u32 {
-        unsafe { (&*self.0).y1 - (&*self.0).y0 }
+        unsafe { (*self.0).y1 - (*self.0).y0 }
     }
 
     pub fn num_components(&self) -> u32 {
         unsafe { (*self.0).numcomps }
     }
 
-    pub fn components(&self) -> &[ffi::opj_image_comp_t] {
+    pub fn components(&self) -> &[openjpeg_sys::opj_image_comp_t] {
         let comps_len = self.num_components();
         unsafe { std::slice::from_raw_parts((*self.0).comps, comps_len as usize) }
     }
@@ -339,7 +356,7 @@ impl Image {
     }
 }
 
-pub struct Component(*mut ffi::opj_image_comp_t);
+pub struct Component(*mut openjpeg_sys::opj_image_comp_t);
 
 #[derive(Debug)]
 pub struct ImageBuffer {
@@ -361,29 +378,31 @@ impl ImageBuffer {
             inner_params.0.cp_layer = quality_layers;
         }
 
-        if unsafe { ffi::opj_setup_decoder(codec.0.as_ptr(), &mut inner_params.0) } != 1 {
+        if unsafe { openjpeg_sys::opj_setup_decoder(codec.0.as_ptr(), &mut inner_params.0) } != 1 {
             return Err(err::Error::boxed("Setting up the decoder failed."));
         }
 
         if let Some(num_threads) = params.num_threads {
-            if unsafe { ffi::opj_codec_set_threads(codec.0.as_ptr(), num_threads) } != 1 {
+            if unsafe { openjpeg_sys::opj_codec_set_threads(codec.0.as_ptr(), num_threads) } != 1 {
                 return Err(err::Error::boxed("Could not set specified threads."));
             }
         }
 
         let mut img = Image::new();
 
-        if unsafe { ffi::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
+        if unsafe { openjpeg_sys::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read header."));
         }
 
         if let Some(DecodingArea { x0, y0, x1, y1 }) = params.decoding_area {
-            if unsafe { ffi::opj_set_decode_area(codec.0.as_ptr(), img.0, x0, y0, x1, y1) } != 1 {
+            if unsafe { openjpeg_sys::opj_set_decode_area(codec.0.as_ptr(), img.0, x0, y0, x1, y1) }
+                != 1
+            {
                 return Err(err::Error::boxed("Setting up the decoding area failed."));
             }
         }
 
-        if unsafe { ffi::opj_decode(codec.0.as_ptr(), stream.0, img.0) } != 1 {
+        if unsafe { openjpeg_sys::opj_decode(codec.0.as_ptr(), stream.0, img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read image."));
         }
 
@@ -422,10 +441,13 @@ impl ImageBuffer {
 
                     let buffer = Vec::with_capacity((width * height * num_bands) as usize);
 
-                    r.iter().zip(g.iter()).zip(b.iter()).fold(buffer, |mut acc, ((r, g), b)| {
-                        acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8]);
-                        acc
-                    })
+                    r.iter()
+                        .zip(g.iter())
+                        .zip(b.iter())
+                        .fold(buffer, |mut acc, ((r, g), b)| {
+                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8]);
+                            acc
+                        })
                 }
                 [comp_r, comp_g, comp_b, comp_a] => {
                     let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
@@ -453,6 +475,11 @@ impl ImageBuffer {
             }
         };
 
-        Ok(ImageBuffer { buffer, width, height, num_bands: num_bands as usize })
+        Ok(ImageBuffer {
+            buffer,
+            width,
+            height,
+            num_bands: num_bands as usize,
+        })
     }
 }
