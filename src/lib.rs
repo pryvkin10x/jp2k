@@ -18,19 +18,17 @@ This library brings its own libopenjpeg, which is statically linked. If you just
 ## Usage
 
 ```rust,no_run
-fn main() {
-    let bytes = include_bytes!("./rust-logo-512x512-blk.jp2");
+let bytes = include_bytes!("./rust-logo-512x512-blk.jp2");
 
-    let jp2k::Image(img) = jp2k::Image::from_bytes(
-        bytes,
-        jp2k::Codec::JP2,
-        Some(jp2k::DecodeParams::default().with_decoding_area(0, 0, 256, 256))
-    )
-    .unwrap();
+let jp2k::Image(img) = jp2k::Image::from_bytes(
+    bytes,
+    jp2k::Codec::JP2,
+    Some(jp2k::DecodeParams::default().with_decoding_area(0, 0, 256, 256))
+)
+.unwrap();
 
-    let mut output = std::path::Path::new("examples/output/result.png");
-    let _ = img.save(&mut output);
-}
+let mut output = std::path::Path::new("examples/output/result.png");
+let _ = img.save(&mut output);
 ```
 
 ## Original warnings and license statement
@@ -87,8 +85,6 @@ pub mod err {
 
     pub type Result<T> = std::result::Result<T, Error>;
 }
-
-use openjpeg_sys;
 
 use std::ffi::CString;
 use std::os::raw::c_void;
