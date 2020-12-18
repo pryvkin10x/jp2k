@@ -3,9 +3,12 @@
 
 ## Rust bindings to OpenJPEG
 
-Supports loading JPEG2000 images into `image::DynamicImage`.Rust
+Supports JPEG2000 decoding
 
-Forked from https://framagit.org/leoschwarz/jpeg2000-rust before its GPL-v3 relicensing, with some additional features:
+Forked from https://github.com/kardeiz/jp2k
+
+The origin is a fork from https://framagit.org/leoschwarz/jpeg2000-rust, before
+its GPL-v3 relicensing, with some additional features:
 
 * Specify decoding area and quality layers in addition to reduction factor
 * Improved OpenJPEG -> DynamicImage loading process
@@ -16,32 +19,52 @@ This library brings its own libopenjpeg, which is statically linked. If you just
 [openjpeg2-sys](https://crates.io/crates/openjpeg2-sys) or [openjpeg-sys](https://crates.io/crates/openjpeg-sys).
 
 
-### Usage
+## Usage
 
 ```rust
-fn main() {
-    let bytes = include_bytes!("./rust-logo-512x512-blk.jp2");
+let bytes = include_bytes!("rust-logo-512x512-blk.jp2");
 
-    let jp2k::Image(img) = jp2k::Image::from_bytes(
-        bytes,
-        jp2k::Codec::JP2,
-        Some(jp2k::DecodeParams::default().with_decoding_area(0, 0, 256, 256))
-    )
-    .unwrap();
+let codec = jp2k::Codec::jp2();
+let stream = jp2k::Stream::from_bytes(bytes).unwrap();
+// let stream = jp2k::Stream::from_file("rust-logo-512x512-blk.jp2").unwrap();
 
-    let mut output = std::path::Path::new("examples/output/result.png");
-    let _ = img.save(&mut output);
-}
+let jp2k::ImageBuffer {
+    buffer,
+    width,
+    height,
+    num_bands,
+} = jp2k::ImageBuffer::build(
+    codec,
+    stream,
+    jp2k::DecodeParams::default().with_reduce_factor(1),
+)
+.unwrap();
+
+let color_type = match num_bands {
+    1 => image::ColorType::L8,
+    2 => image::ColorType::La8,
+    3 => image::ColorType::Rgb8,
+    4 => image::ColorType::Rgba8,
+    _ => panic!(format!("unsupported num_bands found : {}", num_bands)),
+};
+image::save_buffer(
+    "examples/output/image.png",
+    &buffer,
+    width,
+    height,
+    color_type,
+)
+.unwrap();
 ```
 
-### Original warnings and license statement
+## Original warnings and license statement
 
-#### Warning
+### Warning
 Please be advised that using C code means this crate is likely vulnerable to various memory exploits, e.g. see [http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2016-8332](CVE-2016-8332) for an actual example from the past.
 
 As soon as someone writes an efficient JPEG2000 decoder in pure Rust you should probably switch over to that.
 
-#### License
+### License
 You can use the Rust code in the directories `src` and `openjp2-sys/src` under the terms of either the MIT license (`LICENSE-MIT` file) or the Apache license (`LICENSE-APACHE` file). Please note that this will link statically to OpenJPEG, which has its own license which you can find at `openjpeg-sys/libopenjpeg/LICENSE` (you might have to check out the git submodule first).
 
 License: MIT OR Apache-2.0
