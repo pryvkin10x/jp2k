@@ -22,7 +22,7 @@ fn main() {
         2 => image::ColorType::La8,
         3 => image::ColorType::Rgb8,
         4 => image::ColorType::Rgba8,
-        _ => panic!(format!("unsupported num_bands found : {}", num_bands)),
+        _ => panic!("unsupported num_bands found : {}", num_bands),
     };
     image::save_buffer(
         "examples/output/image.png",

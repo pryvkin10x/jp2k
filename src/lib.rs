@@ -217,9 +217,9 @@ impl Stream {
 
         unsafe extern "C" fn opj_stream_read_fn(
             p_buffer: *mut c_void,
-            p_nb_bytes: u64,
+            p_nb_bytes: u32,
             p_user_data: *mut c_void,
-        ) -> u64 {
+        ) -> u32 {
             if p_buffer.is_null() {
                 return 0;
             }
@@ -240,7 +240,7 @@ impl Stream {
 
             (*user_data).offset += bytes_read;
 
-            bytes_read as u64
+            bytes_read as u32
         }
 
         let buf_len = buf.len();
