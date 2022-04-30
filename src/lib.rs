@@ -108,7 +108,7 @@ pub struct DecodeParams {
 
 impl DecodeParams {
     /// Used when the library cannot determine color space
-    pub fn with_default_colorspace(mut self, color_space: COLOR_SPACE) -> Self {
+    pub fn with_default_color_space(mut self, color_space: COLOR_SPACE) -> Self {
         self.default_color_space = Some(color_space);
         self
     }
