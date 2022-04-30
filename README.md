@@ -1,23 +1,21 @@
 # jp2k
 
+[![Build status](https://github.com/dskkato/jp2k/actions/workflows/ci.yml/badge.svg)](https://github.com/dskkato/jp2k/actions/workflows/ci.yml)
 
 ## Rust bindings to OpenJPEG
 
 Supports JPEG2000 decoding
 
-Forked from https://github.com/kardeiz/jp2k
-
-The origin is a fork from https://framagit.org/leoschwarz/jpeg2000-rust, before
-its GPL-v3 relicensing, with some additional features:
+Forked from https://github.com/kardeiz/jp2k, and https://github.com/kardeiz/jp2k is a fork
+from https://framagit.org/leoschwarz/jpeg2000-rust, before its GPL-v3 relicensing, with some
+additional features:
 
 * Specify decoding area and quality layers in addition to reduction factor
 * Improved OpenJPEG -> DynamicImage loading process
 * Get basic metadata from JPEG2000 headings
 * Docs (albeit minimal ones)
 
-This library brings its own libopenjpeg, which is statically linked. If you just need raw FFI bindings, see
-[openjpeg2-sys](https://crates.io/crates/openjpeg2-sys) or [openjpeg-sys](https://crates.io/crates/openjpeg-sys).
-
+This library [openjpeg-sys](https://crates.io/crates/openjpeg-sys) as ffi.
 
 ## Usage
 
