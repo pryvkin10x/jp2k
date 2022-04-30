@@ -67,7 +67,6 @@ You can use the Rust code in the directories `src` and `openjp2-sys/src` under t
 pub mod err;
 
 use std::io::{Cursor, Read};
-use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 
@@ -150,7 +149,9 @@ impl DecodeParams {
 
 pub struct Stream<'a> {
     ptr: *mut ffi::opj_stream_t,
-    phantom: PhantomData<&'a ()>,
+
+    // Read from read_fn in C
+    _cur: Cursor<&'a [u8]>,
 }
 
 impl<'a> Drop for Stream<'a> {
@@ -163,23 +164,20 @@ impl<'a> Drop for Stream<'a> {
 
 impl<'a> Stream<'a> {
     pub fn from_bytes(buf: &'a [u8]) -> err::Result<Self> {
-        let cur = Box::new(Cursor::new(buf));
+        let mut cur = Cursor::new(buf);
         let ptr = unsafe {
             let jp2_stream = ffi::opj_stream_default_create(OPJ_TRUE as i32); // input stream
             ffi::opj_stream_set_read_function(jp2_stream, Some(Self::opj_stream_read_fn));
             ffi::opj_stream_set_user_data_length(jp2_stream, buf.len() as u64);
             ffi::opj_stream_set_user_data(
                 jp2_stream,
-                Box::into_raw(cur) as *mut c_void,
-                Some(Self::opj_stream_free_user_data_fn),
+                &mut cur as *mut Cursor<&[u8]> as *mut c_void,
+                None,
             );
             jp2_stream
         };
 
-        Ok(Stream {
-            ptr,
-            phantom: PhantomData,
-        })
+        Ok(Stream { ptr, _cur: cur })
     }
 
     unsafe extern "C" fn opj_stream_read_fn(
@@ -189,12 +187,7 @@ impl<'a> Stream<'a> {
     ) -> usize {
         let cur = p_user_data as *mut Cursor<&[u8]>;
         let dst = std::slice::from_raw_parts_mut(p_buffer as *mut u8, p_nb_bytes);
-        let n = (*cur).read(dst);
-        n.expect("Failed to read from buffer") // nothing can be done here
-    }
-
-    unsafe extern "C" fn opj_stream_free_user_data_fn(p_user_data: *mut c_void) {
-        Box::from_raw(p_user_data as *mut Cursor<&[u8]>);
+        (*cur).read(dst).expect("Failed to read from buffer") // nothing can be done here
     }
 }
 
