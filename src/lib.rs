@@ -112,15 +112,16 @@ use std::ffi::CString;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 
+use openjpeg_sys as ffi;
 pub use openjpeg_sys::{CODEC_FORMAT, COLOR_SPACE};
 
-struct InnerDecodeParams(openjpeg_sys::opj_dparameters);
+struct InnerDecodeParams(ffi::opj_dparameters);
 
 impl Default for InnerDecodeParams {
     fn default() -> Self {
-        let mut new = unsafe { std::mem::zeroed::<openjpeg_sys::opj_dparameters>() };
+        let mut new = unsafe { std::mem::zeroed::<ffi::opj_dparameters>() };
         unsafe {
-            openjpeg_sys::opj_set_default_decoder_parameters(&mut new as *mut _);
+            ffi::opj_set_default_decoder_parameters(&mut new as *mut _);
         }
         InnerDecodeParams(new)
     }
@@ -186,12 +187,12 @@ impl DecodeParams {
     }
 }
 
-pub struct Stream(*mut openjpeg_sys::opj_stream_t);
+pub struct Stream(*mut ffi::opj_stream_t);
 
 impl Drop for Stream {
     fn drop(&mut self) {
         unsafe {
-            openjpeg_sys::opj_stream_destroy(self.0);
+            ffi::opj_stream_destroy(self.0);
         }
     }
 }
@@ -199,8 +200,7 @@ impl Drop for Stream {
 impl Stream {
     pub fn from_file<T: Into<Vec<u8>>>(file_name: T) -> err::Result<Self> {
         let file_name = CString::new(file_name)?;
-        let ptr =
-            unsafe { openjpeg_sys::opj_stream_create_default_file_stream(file_name.as_ptr(), 1) };
+        let ptr = unsafe { ffi::opj_stream_create_default_file_stream(file_name.as_ptr(), 1) };
         Ok(Stream(ptr))
     }
 
@@ -247,10 +247,10 @@ impl Stream {
         let user_data = Box::new(SliceWithOffset { buf, offset: 0 });
 
         let ptr = unsafe {
-            let jp2_stream = openjpeg_sys::opj_stream_default_create(1);
-            openjpeg_sys::opj_stream_set_read_function(jp2_stream, Some(opj_stream_read_fn));
-            openjpeg_sys::opj_stream_set_user_data_length(jp2_stream, buf_len as u64);
-            openjpeg_sys::opj_stream_set_user_data(
+            let jp2_stream = ffi::opj_stream_default_create(1);
+            ffi::opj_stream_set_read_function(jp2_stream, Some(opj_stream_read_fn));
+            ffi::opj_stream_set_user_data_length(jp2_stream, buf_len as u64);
+            ffi::opj_stream_set_user_data(
                 jp2_stream,
                 Box::into_raw(user_data) as *mut c_void,
                 Some(opj_stream_free_user_data_fn),
@@ -262,12 +262,12 @@ impl Stream {
     }
 }
 
-pub struct Codec(NonNull<openjpeg_sys::opj_codec_t>);
+pub struct Codec(NonNull<ffi::opj_codec_t>);
 
 impl Drop for Codec {
     fn drop(&mut self) {
         unsafe {
-            openjpeg_sys::opj_destroy_codec(self.0.as_ptr());
+            ffi::opj_destroy_codec(self.0.as_ptr());
         }
     }
 }
@@ -278,7 +278,7 @@ impl Codec {
     }
 
     pub fn create(format: CODEC_FORMAT) -> err::Result<Self> {
-        match NonNull::new(unsafe { openjpeg_sys::opj_create_decompress(format) }) {
+        match NonNull::new(unsafe { ffi::opj_create_decompress(format) }) {
             Some(ptr) => Ok(Codec(ptr)),
             None => Err(err::Error::boxed("Setting up the decoder failed.")),
         }
@@ -295,15 +295,15 @@ impl Info {
     pub fn build(codec: Codec, stream: Stream) -> err::Result<Self> {
         let mut params = InnerDecodeParams::default();
 
-        params.0.flags |= openjpeg_sys::OPJ_DPARAMETERS_DUMP_FLAG;
+        params.0.flags |= ffi::OPJ_DPARAMETERS_DUMP_FLAG;
 
-        if unsafe { openjpeg_sys::opj_setup_decoder(codec.0.as_ptr(), &mut params.0) } != 1 {
+        if unsafe { ffi::opj_setup_decoder(codec.0.as_ptr(), &mut params.0) } != 1 {
             return Err(err::Error::boxed("Setting up the decoder failed."));
         }
 
         let mut img = Image::new();
 
-        if unsafe { openjpeg_sys::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
+        if unsafe { ffi::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read header."));
         }
 
@@ -315,12 +315,12 @@ impl Info {
 }
 
 #[derive(Debug)]
-pub struct Image(pub *mut openjpeg_sys::opj_image_t);
+pub struct Image(pub *mut ffi::opj_image_t);
 
 impl Drop for Image {
     fn drop(&mut self) {
         unsafe {
-            openjpeg_sys::opj_image_destroy(self.0);
+            ffi::opj_image_destroy(self.0);
         }
     }
 }
@@ -342,7 +342,7 @@ impl Image {
         unsafe { (*self.0).numcomps }
     }
 
-    pub fn components(&self) -> &[openjpeg_sys::opj_image_comp_t] {
+    pub fn components(&self) -> &[ffi::opj_image_comp_t] {
         let comps_len = self.num_components();
         unsafe { std::slice::from_raw_parts((*self.0).comps, comps_len as usize) }
     }
@@ -356,7 +356,7 @@ impl Image {
     }
 }
 
-pub struct Component(*mut openjpeg_sys::opj_image_comp_t);
+pub struct Component(*mut ffi::opj_image_comp_t);
 
 #[derive(Debug)]
 pub struct ImageBuffer {
@@ -378,31 +378,29 @@ impl ImageBuffer {
             inner_params.0.cp_layer = quality_layers;
         }
 
-        if unsafe { openjpeg_sys::opj_setup_decoder(codec.0.as_ptr(), &mut inner_params.0) } != 1 {
+        if unsafe { ffi::opj_setup_decoder(codec.0.as_ptr(), &mut inner_params.0) } != 1 {
             return Err(err::Error::boxed("Setting up the decoder failed."));
         }
 
         if let Some(num_threads) = params.num_threads {
-            if unsafe { openjpeg_sys::opj_codec_set_threads(codec.0.as_ptr(), num_threads) } != 1 {
+            if unsafe { ffi::opj_codec_set_threads(codec.0.as_ptr(), num_threads) } != 1 {
                 return Err(err::Error::boxed("Could not set specified threads."));
             }
         }
 
         let mut img = Image::new();
 
-        if unsafe { openjpeg_sys::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
+        if unsafe { ffi::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read header."));
         }
 
         if let Some(DecodingArea { x0, y0, x1, y1 }) = params.decoding_area {
-            if unsafe { openjpeg_sys::opj_set_decode_area(codec.0.as_ptr(), img.0, x0, y0, x1, y1) }
-                != 1
-            {
+            if unsafe { ffi::opj_set_decode_area(codec.0.as_ptr(), img.0, x0, y0, x1, y1) } != 1 {
                 return Err(err::Error::boxed("Setting up the decoding area failed."));
             }
         }
 
-        if unsafe { openjpeg_sys::opj_decode(codec.0.as_ptr(), stream.0, img.0) } != 1 {
+        if unsafe { ffi::opj_decode(codec.0.as_ptr(), stream.0, img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read image."));
         }
 
