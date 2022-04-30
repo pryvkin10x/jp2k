@@ -189,6 +189,118 @@ impl<'a> Stream<'a> {
         let dst = std::slice::from_raw_parts_mut(p_buffer as *mut u8, p_nb_bytes);
         (*cur).read(dst).expect("Failed to read from buffer") // nothing can be done here
     }
+
+    pub fn decode(&self, codec: Codec, params: DecodeParams) -> err::Result<ImageBuffer> {
+        let stream = self.ptr;
+        let mut inner_params = InnerDecodeParams::default();
+
+        if let Some(reduce_factor) = params.reduce_factor {
+            inner_params.0.cp_reduce = reduce_factor;
+        }
+
+        if let Some(quality_layers) = params.quality_layers {
+            inner_params.0.cp_layer = quality_layers;
+        }
+
+        if unsafe { ffi::opj_setup_decoder(codec.0.as_ptr(), &mut inner_params.0) } != 1 {
+            return Err(err::Error::boxed("Setting up the decoder failed."));
+        }
+
+        if let Some(num_threads) = params.num_threads {
+            if unsafe { ffi::opj_codec_set_threads(codec.0.as_ptr(), num_threads) } != 1 {
+                return Err(err::Error::boxed("Could not set specified threads."));
+            }
+        }
+
+        let mut img = Image::new();
+
+        if unsafe { ffi::opj_read_header(stream, codec.0.as_ptr(), &mut img.0) } != 1 {
+            return Err(err::Error::boxed("Failed to read header."));
+        }
+
+        if let Some(DecodingArea { x0, y0, x1, y1 }) = params.decoding_area {
+            if unsafe { ffi::opj_set_decode_area(codec.0.as_ptr(), img.0, x0, y0, x1, y1) } != 1 {
+                return Err(err::Error::boxed("Setting up the decoding area failed."));
+            }
+        }
+
+        if unsafe { ffi::opj_decode(codec.0.as_ptr(), stream, img.0) } != 1 {
+            return Err(err::Error::boxed("Failed to read image."));
+        }
+
+        // if unsafe { ffi::opj_end_decompress(codec.0.as_ptr(), stream.0) } != 1 {
+        //     return Err(err::Error::boxed("Ending decoding failed."));
+        // }
+
+        let width = img.width();
+        let height = img.height();
+        let factor = img.factor();
+
+        let width = DecodeParams::value_for_discard_level(width, factor);
+        let height = DecodeParams::value_for_discard_level(height, factor);
+
+        let num_bands;
+
+        let buffer = unsafe {
+            match img.components() {
+                [comp_r] => {
+                    num_bands = 1;
+                    std::slice::from_raw_parts(comp_r.data, (width * height) as usize)
+                        .iter()
+                        .map(|x| *x as u8)
+                        .collect::<Vec<_>>()
+                }
+
+                [comp_r, comp_g, comp_b] => {
+                    let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
+                    let g = std::slice::from_raw_parts(comp_g.data, (width * height) as usize);
+                    let b = std::slice::from_raw_parts(comp_b.data, (width * height) as usize);
+
+                    num_bands = 3;
+
+                    let buffer = Vec::with_capacity((width * height * num_bands) as usize);
+
+                    r.iter()
+                        .zip(g.iter())
+                        .zip(b.iter())
+                        .fold(buffer, |mut acc, ((r, g), b)| {
+                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8]);
+                            acc
+                        })
+                }
+                [comp_r, comp_g, comp_b, comp_a] => {
+                    let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
+                    let g = std::slice::from_raw_parts(comp_g.data, (width * height) as usize);
+                    let b = std::slice::from_raw_parts(comp_b.data, (width * height) as usize);
+                    let a = std::slice::from_raw_parts(comp_a.data, (width * height) as usize);
+
+                    num_bands = 4;
+
+                    let buffer = Vec::with_capacity((width * height * num_bands) as usize);
+
+                    r.iter().zip(g.iter()).zip(b.iter()).zip(a.iter()).fold(
+                        buffer,
+                        |mut acc, (((r, g), b), a)| {
+                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8, *a as u8]);
+                            acc
+                        },
+                    )
+                }
+                _ => {
+                    return Err(err::Error::boxed(
+                        "Operation not supported for that number of components",
+                    ));
+                }
+            }
+        };
+
+        Ok(ImageBuffer {
+            buffer,
+            width,
+            height,
+            num_bands: num_bands as usize,
+        })
+    }
 }
 
 impl Drop for Codec {
@@ -315,117 +427,4 @@ pub struct ImageBuffer {
     pub width: u32,
     pub height: u32,
     pub num_bands: usize,
-}
-
-impl ImageBuffer {
-    pub fn build(codec: Codec, stream: Stream, params: DecodeParams) -> err::Result<Self> {
-        let mut inner_params = InnerDecodeParams::default();
-
-        if let Some(reduce_factor) = params.reduce_factor {
-            inner_params.0.cp_reduce = reduce_factor;
-        }
-
-        if let Some(quality_layers) = params.quality_layers {
-            inner_params.0.cp_layer = quality_layers;
-        }
-
-        if unsafe { ffi::opj_setup_decoder(codec.0.as_ptr(), &mut inner_params.0) } != 1 {
-            return Err(err::Error::boxed("Setting up the decoder failed."));
-        }
-
-        if let Some(num_threads) = params.num_threads {
-            if unsafe { ffi::opj_codec_set_threads(codec.0.as_ptr(), num_threads) } != 1 {
-                return Err(err::Error::boxed("Could not set specified threads."));
-            }
-        }
-
-        let mut img = Image::new();
-
-        if unsafe { ffi::opj_read_header(stream.ptr, codec.0.as_ptr(), &mut img.0) } != 1 {
-            return Err(err::Error::boxed("Failed to read header."));
-        }
-
-        if let Some(DecodingArea { x0, y0, x1, y1 }) = params.decoding_area {
-            if unsafe { ffi::opj_set_decode_area(codec.0.as_ptr(), img.0, x0, y0, x1, y1) } != 1 {
-                return Err(err::Error::boxed("Setting up the decoding area failed."));
-            }
-        }
-
-        if unsafe { ffi::opj_decode(codec.0.as_ptr(), stream.ptr, img.0) } != 1 {
-            return Err(err::Error::boxed("Failed to read image."));
-        }
-
-        // if unsafe { ffi::opj_end_decompress(codec.0.as_ptr(), stream.0) } != 1 {
-        //     return Err(err::Error::boxed("Ending decoding failed."));
-        // }
-
-        let width = img.width();
-        let height = img.height();
-        let factor = img.factor();
-
-        let width = DecodeParams::value_for_discard_level(width, factor);
-        let height = DecodeParams::value_for_discard_level(height, factor);
-
-        let num_bands;
-
-        let buffer = unsafe {
-            match img.components() {
-                [comp_r] => {
-                    num_bands = 1;
-                    std::slice::from_raw_parts(comp_r.data, (width * height) as usize)
-                        .iter()
-                        .map(|x| *x as u8)
-                        .collect::<Vec<_>>()
-                }
-
-                [comp_r, comp_g, comp_b] => {
-                    let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
-                    let g = std::slice::from_raw_parts(comp_g.data, (width * height) as usize);
-                    let b = std::slice::from_raw_parts(comp_b.data, (width * height) as usize);
-
-                    num_bands = 3;
-
-                    let buffer = Vec::with_capacity((width * height * num_bands) as usize);
-
-                    r.iter()
-                        .zip(g.iter())
-                        .zip(b.iter())
-                        .fold(buffer, |mut acc, ((r, g), b)| {
-                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8]);
-                            acc
-                        })
-                }
-                [comp_r, comp_g, comp_b, comp_a] => {
-                    let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
-                    let g = std::slice::from_raw_parts(comp_g.data, (width * height) as usize);
-                    let b = std::slice::from_raw_parts(comp_b.data, (width * height) as usize);
-                    let a = std::slice::from_raw_parts(comp_a.data, (width * height) as usize);
-
-                    num_bands = 4;
-
-                    let buffer = Vec::with_capacity((width * height * num_bands) as usize);
-
-                    r.iter().zip(g.iter()).zip(b.iter()).zip(a.iter()).fold(
-                        buffer,
-                        |mut acc, (((r, g), b), a)| {
-                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8, *a as u8]);
-                            acc
-                        },
-                    )
-                }
-                _ => {
-                    return Err(err::Error::boxed(
-                        "Operation not supported for that number of components",
-                    ));
-                }
-            }
-        };
-
-        Ok(ImageBuffer {
-            buffer,
-            width,
-            height,
-            num_bands: num_bands as usize,
-        })
-    }
 }
