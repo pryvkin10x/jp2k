@@ -73,8 +73,8 @@ use std::ptr::{self, NonNull};
 
 use openjpeg_sys as ffi;
 
+pub use ffi::COLOR_SPACE;
 use ffi::OPJ_TRUE;
-pub use ffi::{CODEC_FORMAT, COLOR_SPACE};
 
 struct InnerDecodeParams(ffi::opj_dparameters);
 
@@ -198,8 +198,6 @@ impl<'a> Stream<'a> {
     }
 }
 
-pub struct Codec(NonNull<ffi::opj_codec_t>);
-
 impl Drop for Codec {
     fn drop(&mut self) {
         unsafe {
@@ -208,17 +206,42 @@ impl Drop for Codec {
     }
 }
 
+/// Thin wrapper around the `opj_codec_t` struct
+pub struct Codec(NonNull<ffi::opj_codec_t>);
+
 impl Codec {
-    pub fn jp2() -> Self {
-        Self::create(CODEC_FORMAT::OPJ_CODEC_JP2).expect("Known format `JP2` should not fail")
+    fn create(format: ffi::CODEC_FORMAT) -> Self {
+        // following unwrap is safe since unknown format is never used.
+        let ptr = unsafe { ffi::opj_create_decompress(format) };
+        Codec(NonNull::new(ptr).unwrap())
     }
 
-    pub fn create(format: CODEC_FORMAT) -> err::Result<Self> {
-        match NonNull::new(unsafe { ffi::opj_create_decompress(format) }) {
-            Some(ptr) => Ok(Codec(ptr)),
-            None => Err(err::Error::boxed("Setting up the decoder failed.")),
-        }
+    /// JPEG-2000 codestream : read/write
+    pub fn j2k() -> Self {
+        Self::create(ffi::CODEC_FORMAT::OPJ_CODEC_J2K)
     }
+
+    /// JPT-stream (JPEG 2000, JPIP) : read only
+    pub fn jpt() -> Self {
+        Self::create(ffi::CODEC_FORMAT::OPJ_CODEC_JPT)
+    }
+
+    /// JP2 file format : read/write
+    pub fn jp2() -> Self {
+        Self::create(ffi::CODEC_FORMAT::OPJ_CODEC_JP2)
+    }
+
+    /// JPP-stream (JPEG 2000, JPIP) : to be coded
+    pub fn jpp() -> Self {
+        Self::create(ffi::CODEC_FORMAT::OPJ_CODEC_JPP)
+    }
+
+    /// JPX file format (JPEG 2000 Part-2) : to be coded
+    pub fn jpx() -> Self {
+        Self::create(ffi::CODEC_FORMAT::OPJ_CODEC_JPX)
+    }
+
+    // unknown format should not be defined
 }
 
 pub struct Info {
@@ -342,9 +365,6 @@ impl ImageBuffer {
         // if unsafe { ffi::opj_end_decompress(codec.0.as_ptr(), stream.0) } != 1 {
         //     return Err(err::Error::boxed("Ending decoding failed."));
         // }
-
-        drop(codec);
-        drop(stream);
 
         let width = img.width();
         let height = img.height();
