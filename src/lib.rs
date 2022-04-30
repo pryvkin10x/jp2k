@@ -64,56 +64,17 @@ As soon as someone writes an efficient JPEG2000 decoder in pure Rust you should 
 You can use the Rust code in the directories `src` and `openjp2-sys/src` under the terms of either the MIT license (`LICENSE-MIT` file) or the Apache license (`LICENSE-APACHE` file). Please note that this will link statically to OpenJPEG, which has its own license which you can find at `openjpeg-sys/libopenjpeg/LICENSE` (you might have to check out the git submodule first).
 */
 
-pub mod err {
-    #[derive(Debug)]
-    pub enum Error {
-        NulError(std::ffi::NulError),
-        Io(std::io::Error),
-        Boxed(Box<dyn std::error::Error + Send + Sync>),
-    }
+pub mod err;
 
-    impl Error {
-        pub fn boxed<E: Into<Box<dyn std::error::Error + 'static + Send + Sync>>>(e: E) -> Self {
-            Error::Boxed(e.into())
-        }
-    }
-
-    impl std::fmt::Display for Error {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            use Error::*;
-            match self {
-                NulError(ref e) => {
-                    write!(f, "{}", e)?;
-                }
-                Io(ref e) => {
-                    write!(f, "{}", e)?;
-                }
-                Boxed(ref e) => {
-                    write!(f, "{}", e)?;
-                }
-            }
-
-            Ok(())
-        }
-    }
-
-    impl From<std::ffi::NulError> for Error {
-        fn from(t: std::ffi::NulError) -> Self {
-            Error::NulError(t)
-        }
-    }
-
-    impl std::error::Error for Error {}
-
-    pub type Result<T> = std::result::Result<T, Error>;
-}
-
-use std::ffi::CString;
+use std::io::{Cursor, Read};
+use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 
 use openjpeg_sys as ffi;
-pub use openjpeg_sys::{CODEC_FORMAT, COLOR_SPACE};
+
+use ffi::OPJ_TRUE;
+pub use ffi::{CODEC_FORMAT, COLOR_SPACE};
 
 struct InnerDecodeParams(ffi::opj_dparameters);
 
@@ -187,78 +148,53 @@ impl DecodeParams {
     }
 }
 
-pub struct Stream(*mut ffi::opj_stream_t);
+pub struct Stream<'a> {
+    ptr: *mut ffi::opj_stream_t,
+    phantom: PhantomData<&'a ()>,
+}
 
-impl Drop for Stream {
+impl<'a> Drop for Stream<'a> {
     fn drop(&mut self) {
         unsafe {
-            ffi::opj_stream_destroy(self.0);
+            ffi::opj_stream_destroy(self.ptr);
         }
     }
 }
 
-impl Stream {
-    pub fn from_file<T: Into<Vec<u8>>>(file_name: T) -> err::Result<Self> {
-        let file_name = CString::new(file_name)?;
-        let ptr = unsafe { ffi::opj_stream_create_default_file_stream(file_name.as_ptr(), 1) };
-        Ok(Stream(ptr))
-    }
-
-    pub fn from_bytes(buf: &[u8]) -> err::Result<Self> {
-        #[derive(Debug)]
-        struct SliceWithOffset<'a> {
-            buf: &'a [u8],
-            offset: usize,
-        }
-
-        unsafe extern "C" fn opj_stream_free_user_data_fn(p_user_data: *mut c_void) {
-            drop(Box::from_raw(p_user_data as *mut SliceWithOffset))
-        }
-
-        unsafe extern "C" fn opj_stream_read_fn(
-            p_buffer: *mut c_void,
-            p_nb_bytes: usize,
-            p_user_data: *mut c_void,
-        ) -> usize {
-            if p_buffer.is_null() {
-                return 0;
-            }
-
-            let user_data = p_user_data as *mut SliceWithOffset;
-
-            let len = (*user_data).buf.len();
-
-            let offset = (*user_data).offset;
-
-            let bytes_left = len - offset;
-
-            let bytes_read = std::cmp::min(bytes_left, p_nb_bytes as usize);
-
-            let slice = &(*user_data).buf[offset..offset + bytes_read];
-
-            std::ptr::copy_nonoverlapping(slice.as_ptr(), p_buffer as *mut u8, bytes_read);
-
-            (*user_data).offset += bytes_read;
-
-            bytes_read as usize
-        }
-
-        let buf_len = buf.len();
-        let user_data = Box::new(SliceWithOffset { buf, offset: 0 });
-
+impl<'a> Stream<'a> {
+    pub fn from_bytes(buf: &'a [u8]) -> err::Result<Self> {
+        let cur = Box::new(Cursor::new(buf));
         let ptr = unsafe {
-            let jp2_stream = ffi::opj_stream_default_create(1);
-            ffi::opj_stream_set_read_function(jp2_stream, Some(opj_stream_read_fn));
-            ffi::opj_stream_set_user_data_length(jp2_stream, buf_len as u64);
+            let jp2_stream = ffi::opj_stream_default_create(OPJ_TRUE as i32); // input stream
+            ffi::opj_stream_set_read_function(jp2_stream, Some(Self::opj_stream_read_fn));
+            ffi::opj_stream_set_user_data_length(jp2_stream, buf.len() as u64);
             ffi::opj_stream_set_user_data(
                 jp2_stream,
-                Box::into_raw(user_data) as *mut c_void,
-                Some(opj_stream_free_user_data_fn),
+                Box::into_raw(cur) as *mut c_void,
+                Some(Self::opj_stream_free_user_data_fn),
             );
             jp2_stream
         };
 
-        Ok(Stream(ptr))
+        Ok(Stream {
+            ptr,
+            phantom: PhantomData,
+        })
+    }
+
+    unsafe extern "C" fn opj_stream_read_fn(
+        p_buffer: *mut c_void,
+        p_nb_bytes: usize,
+        p_user_data: *mut c_void,
+    ) -> usize {
+        let cur = p_user_data as *mut Cursor<&[u8]>;
+        let dst = std::slice::from_raw_parts_mut(p_buffer as *mut u8, p_nb_bytes);
+        let n = (*cur).read(dst);
+        n.expect("Failed to read from buffer") // nothing can be done here
+    }
+
+    unsafe extern "C" fn opj_stream_free_user_data_fn(p_user_data: *mut c_void) {
+        Box::from_raw(p_user_data as *mut Cursor<&[u8]>);
     }
 }
 
@@ -285,7 +221,6 @@ impl Codec {
     }
 }
 
-#[derive(Debug)]
 pub struct Info {
     pub width: u32,
     pub height: u32,
@@ -303,7 +238,7 @@ impl Info {
 
         let mut img = Image::new();
 
-        if unsafe { ffi::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
+        if unsafe { ffi::opj_read_header(stream.ptr, codec.0.as_ptr(), &mut img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read header."));
         }
 
@@ -390,7 +325,7 @@ impl ImageBuffer {
 
         let mut img = Image::new();
 
-        if unsafe { ffi::opj_read_header(stream.0, codec.0.as_ptr(), &mut img.0) } != 1 {
+        if unsafe { ffi::opj_read_header(stream.ptr, codec.0.as_ptr(), &mut img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read header."));
         }
 
@@ -400,7 +335,7 @@ impl ImageBuffer {
             }
         }
 
-        if unsafe { ffi::opj_decode(codec.0.as_ptr(), stream.0, img.0) } != 1 {
+        if unsafe { ffi::opj_decode(codec.0.as_ptr(), stream.ptr, img.0) } != 1 {
             return Err(err::Error::boxed("Failed to read image."));
         }
 
