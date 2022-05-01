@@ -190,7 +190,8 @@ impl<'a> Stream<'a> {
         (*cur).read(dst).expect("Failed to read from buffer") // nothing can be done here
     }
 
-    pub fn decode(&self, codec: Codec, params: DecodeParams) -> err::Result<ImageBuffer> {
+    /// Decode a JPEG2000
+    pub fn decode(self, codec: Codec, params: DecodeParams) -> err::Result<ImageBuffer> {
         let stream = self.ptr;
         let mut inner_params = InnerDecodeParams::default();
 
