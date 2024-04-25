@@ -19,22 +19,16 @@ This library brings its own libopenjpeg, which is statically linked. If you just
 
 ```rust,no_run
 let bytes = include_bytes!("rust-logo-512x512-blk.jp2");
-
 let codec = jp2k::Codec::jp2();
 let stream = jp2k::Stream::from_bytes(bytes).unwrap();
-// let stream = jp2k::Stream::from_file("rust-logo-512x512-blk.jp2").unwrap();
 
 let jp2k::ImageBuffer {
     buffer,
     width,
     height,
     num_bands,
-} = jp2k::ImageBuffer::build(
-    codec,
-    stream,
-    jp2k::DecodeParams::default().with_reduce_factor(1),
-)
-.unwrap();
+    precision,
+} = stream.decode(codec, jp2k::DecodeParams::default()).unwrap();
 
 let color_type = match num_bands {
     1 => image::ColorType::L8,
@@ -249,17 +243,40 @@ impl<'a> Stream<'a> {
 
         let num_bands;
 
-        let buffer = unsafe {
+        let (buffer, precision) = unsafe {
             match img.components() {
                 [comp_r] => {
                     num_bands = 1;
-                    std::slice::from_raw_parts(comp_r.data, (width * height) as usize)
-                        .iter()
-                        .map(|x| *x as u8)
-                        .collect::<Vec<_>>()
+
+                    if comp_r.prec == 8 {
+                        let buffer =
+                            std::slice::from_raw_parts(comp_r.data, (width * height) as usize)
+                                .iter()
+                                .map(|x| *x as u8)
+                                .collect::<Vec<_>>();
+                        (buffer, 8)
+                    } else if comp_r.prec == 16 {
+                        let buffer =
+                            std::slice::from_raw_parts(comp_r.data, (width * height) as usize)
+                                .iter()
+                                .flat_map(|x| (*x as u16).to_ne_bytes())
+                                .collect::<Vec<_>>();
+                        (buffer, 16)
+                    } else {
+                        return Err(err::Error::boxed(format!(
+                            "Unsupported precision for grayscale: {}",
+                            comp_r.prec
+                        )));
+                    }
                 }
 
                 [comp_r, comp_g, comp_b] => {
+                    if comp_r.prec != 8 {
+                        return Err(err::Error::boxed(format!(
+                            "Unsupported precision for RGB: {}",
+                            comp_r.prec
+                        )));
+                    }
                     let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
                     let g = std::slice::from_raw_parts(comp_g.data, (width * height) as usize);
                     let b = std::slice::from_raw_parts(comp_b.data, (width * height) as usize);
@@ -268,15 +285,24 @@ impl<'a> Stream<'a> {
 
                     let buffer = Vec::with_capacity((width * height * num_bands) as usize);
 
-                    r.iter()
-                        .zip(g.iter())
-                        .zip(b.iter())
-                        .fold(buffer, |mut acc, ((r, g), b)| {
-                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8]);
-                            acc
-                        })
+                    (
+                        r.iter().zip(g.iter()).zip(b.iter()).fold(
+                            buffer,
+                            |mut acc, ((r, g), b)| {
+                                acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8]);
+                                acc
+                            },
+                        ),
+                        8,
+                    )
                 }
                 [comp_r, comp_g, comp_b, comp_a] => {
+                    if comp_r.prec != 8 {
+                        return Err(err::Error::boxed(format!(
+                            "Unsupported precision for RGBA: {}",
+                            comp_r.prec
+                        )));
+                    }
                     let r = std::slice::from_raw_parts(comp_r.data, (width * height) as usize);
                     let g = std::slice::from_raw_parts(comp_g.data, (width * height) as usize);
                     let b = std::slice::from_raw_parts(comp_b.data, (width * height) as usize);
@@ -286,12 +312,15 @@ impl<'a> Stream<'a> {
 
                     let buffer = Vec::with_capacity((width * height * num_bands) as usize);
 
-                    r.iter().zip(g.iter()).zip(b.iter()).zip(a.iter()).fold(
-                        buffer,
-                        |mut acc, (((r, g), b), a)| {
-                            acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8, *a as u8]);
-                            acc
-                        },
+                    (
+                        r.iter().zip(g.iter()).zip(b.iter()).zip(a.iter()).fold(
+                            buffer,
+                            |mut acc, (((r, g), b), a)| {
+                                acc.extend_from_slice(&[*r as u8, *g as u8, *b as u8, *a as u8]);
+                                acc
+                            },
+                        ),
+                        8,
                     )
                 }
                 _ => {
@@ -307,6 +336,7 @@ impl<'a> Stream<'a> {
             width,
             height,
             num_bands: num_bands as usize,
+            precision,
         })
     }
 }
@@ -435,4 +465,5 @@ pub struct ImageBuffer {
     pub width: u32,
     pub height: u32,
     pub num_bands: usize,
+    pub precision: u32,
 }

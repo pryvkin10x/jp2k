@@ -9,17 +9,25 @@ fn main() {
         width,
         height,
         num_bands,
+        precision,
     } = stream
         .decode(codec, jp2k::DecodeParams::default().with_reduce_factor(1))
         .unwrap();
 
-    let color_type = match num_bands {
-        1 => image::ColorType::L8,
-        2 => image::ColorType::La8,
-        3 => image::ColorType::Rgb8,
-        4 => image::ColorType::Rgba8,
-        _ => panic!("unsupported num_bands found : {}", num_bands),
+    let color_type = match (num_bands, precision) {
+        (1, 8) => image::ColorType::L8,
+        (1, 16) => image::ColorType::L16,
+        (2, 8) => image::ColorType::La8,
+        (3, 8) => image::ColorType::Rgb8,
+        (4, 8) => image::ColorType::Rgba8,
+        _ => {
+            panic!(
+                "unsupported num_bands, precision: {}, {}",
+                num_bands, precision
+            )
+        }
     };
+
     image::save_buffer(
         "examples/output/image.png",
         &buffer,
